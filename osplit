@@ -4,6 +4,8 @@
 # David Nelson, University of Strathclyde
 # 28th October 2024
 
+# RELEASED UNDER THE GNU GPL v3
+
 # USAGE
 # osplit <filename_root> <jobtype> <cpus> <charge> <mult>
 #
