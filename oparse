@@ -1,0 +1,114 @@
+#!/bin/bash
+
+# SCRIPT TO DETERMINE ORCA JOB TYPE AND RETURN ENERGY/ENERGIES
+# David Nelson, University of Strathclyde
+# 29th October 2024
+
+# RELEASED UNDER THE GNU GPL v3
+
+# USAGE
+# oparse [<ORCA output file> | dir]
+# If no output file is specificed, it will act on all .out files within the folder
+# If dir is specified then it will work on all output files in all folders within the current folder, e.g. calc1/calc1.out calc2/calc2.out ...
+
+# FUNCTIONS
+# WHAT JOB TYPE? Single point (sp) or Opt+Freq (of)
+get_job_type () {
+	grep -q "Single Point Calculation" $1;
+	if [[ $? -eq 0 ]]; then
+		job_type="sp";
+	elif [[ $? -eq 1 ]]; then
+		grep -q "Geometry Optimization" $1;
+		if [[ $? -eq 0 ]]; then
+			job_type="of";
+		else
+			job_type="no"; # Not an ORCA output file, e.g. a slurm-123456.out file
+		fi;
+	else
+		echo "ERROR: Cannot read" $1;
+		exit 1;
+	fi;
+}
+
+#########################################################################################################
+#	OPTION 1: THE FIRST ARGUMENT IS dir SO WE'RE WORKING ON A SERIES OF FILES IN DIRECTORIES	#
+#########################################################################################################
+if [[ "$1" == "dir" ]]; then
+	echo "Working on a series of .out files in a series of directories within this directory ..."
+	
+	for directory in */; do
+		cd $directory;
+		for file in *out; do
+			# Ignore all of the filename_atom##.out files ...
+			if [[ ! "$file" == *"atom"* ]]; then
+				get_job_type $file;
+				if [[ "$job_type" == "sp" ]]; then
+					spdata="$(grep 'FINAL SINGLE POINT ENERGY' $file | tr -d '\n')";
+					echo $file $spdata;
+				elif [[ "$job_type" == "of" ]]; then
+					gdata="$(grep 'Final Gibbs free energy' $file | tr -d '\n')";
+					gcorr="$(grep 'G-E(el)' $file | tr -d '\n')";
+					echo $file $gdata $gcorr;
+				fi;
+			fi;
+		done;	
+		cd ..;
+	done;	
+	exit 0;
+
+#########################################################################################################
+#	OPTION 2: NO ARGUMENTS PASSED - SO CHECK ALL .out FILES IN THE WORKING DIRECTORY		#
+#########################################################################################################
+elif [[ -z "${1}" ]]; then
+	echo "No output file defined: working on all output files in this directory ...";
+	ls *.out > /dev/null 2>&1;
+	if [[ ! $? -eq 0 ]]; then
+		echo "ERROR: No .out files in this directory";
+		exit 1;
+	fi
+# Single line output per file to make it easier to shove stuff into Excel ...
+	for file in *out; do
+# Ignore all of the filename_atom##.out files ...
+		if [[ ! "$file" == *"atom"* ]]; then
+			get_job_type $file;
+			if [[ "$job_type" == "sp" ]]; then
+				spdata="$(grep 'FINAL SINGLE POINT ENERGY' $file | tr -d '\n')";
+				echo $file $spdata;
+			elif [[ "$job_type" == "of" ]]; then
+				gdata="$(grep 'Final Gibbs free energy' $file | tr -d '\n')";
+				gcorr="$(grep 'G-E(el)' $file | tr -d '\n')";
+				echo $file $gdata $gcorr;
+			fi;
+		fi;
+	done;
+	exit 0;
+
+#########################################################################################################
+#	OPTION 3: FILENAME DEFINED, SO CHECK IF IT ACTUALLY EXISTS, AND IF SO, USE THAT			#
+#########################################################################################################
+elif [ ! -f $1 ]; then
+       	echo "ERROR: Cannot find " $1;
+       	exit 1;
+else
+	echo "Filename:" $1;
+	get_job_type "$1";
+	if [[ "$job_type" == "sp" ]]; then
+		echo "Job is a SINGLE POINT CALCULATION";
+		grep "FINAL SINGLE POINT ENERGY" $1;
+		exit 0;
+	elif [[ "$job_type" == "of" ]]; then
+		echo "Job is a GEOMETRY OPTIMISATION";
+		grep "Final Gibbs free energy" $1;
+		grep "G-E(el)" $1;
+		exit 0;
+	fi;
+fi;
+
+
+
+
+
+
+
+
+
