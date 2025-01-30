@@ -333,7 +333,7 @@ case $1 in
 	*)
 	check_input $1;
 	write_script $1 ${1/.inp/.sh};
-	submit_script ${file/.inp/.sh};
+	submit_script ${1/.inp/.sh};
 	;;
 
 esac;
