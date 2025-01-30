@@ -332,7 +332,7 @@ case $1 in
 # Assume then that $1 is a specific file ...
 	*)
 	check_input $1;
-	write_script $1 ${1/.inp.sh};
+	write_script $1 ${1/.inp/.sh};
 	submit_script ${file/.inp/.sh};
 	;;
 
