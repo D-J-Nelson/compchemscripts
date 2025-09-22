@@ -1,0 +1,341 @@
+#!/bin/bash
+
+####################################################################################################
+# SCRIPT TO SUBMIT JOBS TO ORCA ON ARCHIE-WEST
+# (or a SLURM-toting HPC facility of your choice)
+
+# David Nelson, University of Strathclyde
+# 30th January 2025
+
+# RELEASED UNDER THE GNP GPL v3
+
+# USAGE
+# goorca <input file>.inp | all | dir | condif | conall [<time> <partition> <account>]
+# 	If <input file>.inp is specified, the script will submit that job
+#	(The setting for $confirm_submit determines whether the user is prompted to confirm before submission to the queue)
+#	If all is specified, the script will submit all input files in the working directory
+# 	If dir is specified, the script will submit all input files in all directories in the working directory
+#	(These three options do not prompt the user to confirm that they are happy to submit to the queue ... it just does it)
+#	If conall is specified, the script will work as per all, but confirming the submission of each job
+#	If condir is specified, the script will work as per dir, but confirming the submission of each job
+####################################################################################################
+
+
+####################################################################################################
+# SETTINGS - CHANGE TO SENSIBLE DEFAULTS
+# Default time per job?
+time=48;
+# Default partition? Use standard for PGR/staff or teaching for MChem.
+partition="standard";
+# Default account? Specific account for PGR/staff or teaching for MChem.
+account="nelson-msotmmc";
+# If a .sh file already exists, confirm before overwriting it? 0 for no and 1 for yes.
+confirm_overwrite=1;
+# Confirm submission of the job? 0 for no and 1 for yes.
+# Note that all and dir NEVER confirm; conall and condir ALWAYS confirm.
+# This setting then ONLY applies to usage when you point the script at one input file.
+confirm_submit=1;
+# ORCA module? The full path to ORCA will be found using which.
+orcamodule="orca/6.0.1";
+####################################################################################################
+
+
+####################################################################################################
+# FUNCTIONS
+
+# Input sanitation for $2 $3 $4 (if they exist)
+# Annoyingly, these become $1 $2 $3 inside the function ...
+check_settings () { 
+
+echo "Checking settings ...";
+
+if [[ ! -z "$1" ]]; then
+# Check runtime
+	if [[ ! $1 =~ ^[0-9]+$  ]]; then
+		echo "ERROR: Runtime must be a positive integer.";
+		exit 1;
+	else
+		time=$1;
+	fi;
+fi;
+
+# Then check partition
+if [[ ! -z "$2" ]]; then
+	case $2 in
+		standard | bigmem | teaching)
+			partition=$2;
+			;;
+		*)
+			echo "ERROR: Invalid partition requested";
+			exit 1;
+			;;
+	esac;
+fi;
+
+# Otherwise set maxcores, maxtime, maxmem based on default $partition ...
+case $partition in
+	standard)
+		maxcores=40;
+		maxtime=120;
+		maxmem=4500;
+		;;
+	bigmem)
+		maxcores=80;
+		maxtime=120;
+		maxmem=37000;
+		;;
+	teaching)
+		maxcores=16;
+		maxtime=48;
+		maxmem=3500;
+		;;
+	*)
+		echo "ERROR: Invalid partition defined in script.";
+		exit 1;
+		;;
+esac;
+
+# Check that the selected runtime is allowed ... 
+if [[ "$time" -gt "$maxtime" ]]; then
+		echo "ERROR: Maximum runtime on" $partition "is" $maxtime "and you have requested" $time.
+		exit 1;
+fi;
+
+# Then check account
+if [[ ! -z "$3" ]]; then
+	account=$3;
+fi
+
+case $account in
+	teaching)
+		if [[ ! "$partition" == "teaching" ]]; then
+			echo "ERROR: The teaching account is only valid for the teaching partition.";
+			exit 1;
+		fi;
+		;;
+	*)
+		if [[ "$partition" == "teaching" ]]; then
+		echo "ERROR: Only the teaching account is valid for the teaching partition."
+		exit 1;
+		fi;
+		;;
+esac;
+	
+	
+
+
+# Confirm settings:
+echo "Runtime:" $time "hour(s)";
+echo "Partition:" $partition;
+echo "Account:" $account;
+}
+####################################################################################################
+
+
+####################################################################################################
+# Check the input file
+check_input () {
+echo "File:" $1;
+
+# Does the file exist?
+if [ ! -f $1 ]; then
+	echo "ERROR: Input file does not exist.";
+	exit 1;
+fi;
+
+# Check file extension
+case ${1##*.} in
+		inp)
+			echo "File extension is" ${1##*.} "... OK";
+			;;
+		*)
+			echo "ERROR: Not a valid file extension for a ORCA input file";
+			echo "ERROR: Please specify a .inp file";
+			exit 1;
+esac;
+
+# Check number of CPUs
+cpus=$(grep nprocs $1 | tr -d -c 0-9);
+if [ -z $cpus ]; then
+	echo "ERROR: nprocs missing from the input file";
+	exit 1;
+elif [[ $cpus -lt 0 ]]; then
+	echo "ERROR: Number of CPU cores must be positive";
+	exit 1;
+elif [[ $cpus -gt $maxcores ]]; then
+	echo "ERROR:" $cpus "requested but only" $maxcores "are available on" $partition "nodes."
+	exit 1;
+fi;
+
+# Parse memory definition
+mem=$(grep "%maxcore" $1 | tr -d -c 0-9);
+# Check that this was actually successful ...				 #
+if [ -z $mem ]; then
+        echo "ERROR: %maxcore missing from the input file";
+        exit 1;
+fi;
+# Check that the memory request is sensible ...
+if [[ "$mem" -gt "$maxmem" ]]; then
+		echo "ERROR: You have requested" $mem "per core, but only" $maxmem "is available for ORCA on" $partition "nodes."
+		exit 1;
+fi;
+}	
+####################################################################################################
+
+
+####################################################################################################
+# Write the job script
+# $1 is the input file; $2 is the script file to write ...
+write_script() {
+
+# Check if we are overwriting an existing file ... 
+if [ -f $2 ]; then
+	while [ $confirm_overwrite -eq 1 ]; do
+		echo "WARNING: A file already exists with this name.";
+		echo "WARNING: Overwrite? (y/n)";
+		read overwrite_confirm;
+		case $overwrite_confirm in
+			yes | y | Y | YES | Yes)
+				confirm_overwrite=0;
+				;;
+			no | n | N | NO | No)
+				echo "ERROR: script file exists; exiting ...";
+				exit 1;
+				;;
+			*)
+		esac;
+	done;
+	rm $2;
+fi;
+
+
+# Shebang and so forth ... 
+echo "#!/bin/bash" > $2;
+echo >> $2;
+echo "#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#" >> $2;
+echo "#ORCA SLURM script automagically generated" >> $2;
+echo "#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~#" >> $2;
+echo >> $2;
+
+echo "#SBATCH --export=ALL" >> $2;
+
+echo "#SBATCH --partition="$partition >> $2;
+echo "#SBATCH --account="$account >> $2;
+echo "#SBATCH --ntasks="$cpus >> $2;
+
+# Ensure that jobs are NOT split across multiple nodes, for performance reasons
+echo "#SBATCH --nodes=1" >> $2;
+
+echo "#SBATCH --time="$time":00:00" >> $2;
+
+# Set SLURM job name to input file minus extension.                      #
+echo "#SBATCH --job-name="${1%.*} >> $2;
+
+echo "#SBATCH --output=slurm-%j.out" >> $2;
+echo >> $2;
+echo "module purge" >> $2;
+echo "module load" $orcamodule >> $2;
+echo "/opt/software/scripts/job_prologue.sh" >> $2;
+echo "\$(which orca)" $1 " >> " ${1/.inp/.out} >> $2;
+echo "/opt/software/scripts/job_epilogue.sh" >> $2;
+
+echo "Scriptfile written to" $2;
+}
+####################################################################################################
+
+####################################################################################################
+# Submit the job script
+# $1 is the script file
+submit_script() {
+
+if [ $confirm_submit -eq 1 ]; then
+	while : ; do
+		echo "Submit" $1 "? (y/n)";	
+		read submitfile;
+		case $submitfile in
+			y | Y | yes | YES)
+				sbatch $1;
+				echo $1 "submitted";
+				break;
+				;;
+			n | N | no | NO)
+				break;
+				;;
+		esac;
+	done;
+else
+	sbatch $1;
+fi;
+
+}
+####################################################################################################
+
+
+####################################################################################################
+# DO THE THINGS
+
+# Check that there is at least one argument ..
+if [[ $# -eq 0 ]]; then
+	echo "ERROR: No arguments passed to script.";
+	echo "USAGE: goorca <input file>.inp | all | dir | condif | conall [<time> <partition> <account>]";
+	exit 1;
+fi;
+
+# Check the rest of the settings ...
+# These become $1 $2 $3 inside the function!
+check_settings $2 $3 $4; 
+echo "Settings OK";
+
+# Check the first argument ...
+case $1 in
+
+# Submit all jobs in the directory ... without or with confirmation by the user.
+	all | conall )
+		echo "Working on all input files in " $('pwd');
+		if [[ "$1" == *"con"* ]]; then 
+			confirm_submit=1;
+			echo "Submission of each job will be confirmed with the user.";
+		else
+			confirm_submit=0;
+			echo "All jobs will be submitted automatically.";
+		fi;
+
+	for file in *inp; do
+		check_input $file;
+		write_script $file ${file/.inp/.sh};
+		submit_script ${file/.inp/.sh};
+	done
+	;;
+
+# Submit the jobs in all directories in this directory ... without or with confirmation by the user.
+	dir | condir )
+		echo "Working on all input files in ..." $(ls -d */);	
+		if [[ "$1" == *"con"* ]]; then 
+			confirm_submit=1;
+			echo "Submission of each job will be confirmed with the user.";
+		else
+			confirm_submit=0;
+			echo "All jobs will be submitted automatically.";
+		fi;
+	
+		for direc in */; do
+			cd $direc;			
+			for file in *inp; do
+				check_input $file;
+				write_script $file ${file/.inp/.sh};
+				submit_script ${file/.inp/.sh};
+			done;
+			cd ..;
+		done;
+	;;
+
+# Assume then that $1 is a specific file ...
+	*)
+	check_input $1;
+	write_script $1 ${1/.inp/.sh};
+	submit_script ${1/.inp/.sh};
+	;;
+
+esac;
+
+
