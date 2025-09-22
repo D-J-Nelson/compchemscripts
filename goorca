@@ -3,9 +3,10 @@
 ####################################################################################################
 # SCRIPT TO SUBMIT JOBS TO ORCA ON ARCHIE-WEST
 # (or a SLURM-toting HPC facility of your choice)
+# Updated for ORCA 6.1
 
 # David Nelson, University of Strathclyde
-# 30th January 2025
+# 22nd September 2025
 
 # RELEASED UNDER THE GNP GPL v3
 
@@ -36,7 +37,7 @@ confirm_overwrite=1;
 # This setting then ONLY applies to usage when you point the script at one input file.
 confirm_submit=1;
 # ORCA module? The full path to ORCA will be found using which.
-orcamodule="orca/6.0.1";
+orcamodule="orca/6.1.0";
 ####################################################################################################
 
 
