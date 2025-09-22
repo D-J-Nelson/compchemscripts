@@ -2,7 +2,8 @@
 
 # SCRIPT TO DETERMINE ORCA JOB TYPE AND RETURN ENERGY/ENERGIES
 # David Nelson, University of Strathclyde
-# 29th October 2024
+# TODO: Update to handle transition states better!
+# 22nd September 2025
 
 # RELEASED UNDER THE GNU GPL v3
 
