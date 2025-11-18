@@ -86,9 +86,12 @@ case $partition in
 		maxmem=37000;
 		;;
 	teaching)
-		maxcores=16;
-		maxtime=48;
-		maxmem=3500;
+	#	maxcores=16;
+	#	maxtime=48;
+	#	maxmem=3500;
+		maxcores=40;
+		maxtime=120;
+		maxmem=4500;
 		;;
 	*)
 		echo "ERROR: Invalid partition defined in script.";
