@@ -1,0 +1,219 @@
+#!/bin/bash
+
+# Script to split GOAT output into ORCA files
+# David Nelson, University of Strathclyde
+# 7th August 2025
+# v1
+
+# USAGE
+# goatsplit <filename_root> <jobtype> <cpus> <charge> <mult>
+#
+# DEFAULTS
+# <jobtype> = sp	Single Point
+# <cpus> = 8		8 cores
+# <charge> = 0		Neutral
+# <mult> = 1		Singlet
+
+# Change the functional (and/or basis set, other options, etc.) below.
+# If in doubt, do not touch :)
+#keywords_default="! wb97x-3c "
+keywords_default="! r2scan-3c "
+
+# INPUT SANITATION
+echo "Checking inputs ..."
+
+if [[ -z "${1}" ]]; then
+	echo "USAGE: osplit <filename_root> [<jobtype> <cpus> <charge> <mult>]";
+	echo "jobtype = [sp] opt topt tsopt tsirc";
+	exit 1;
+fi;
+
+if [[ -n "${2}" ]]; then
+	case $2 in
+		sp)
+		keywords_job=" SP ";
+		echo "Job type is a SINGLE POINT CALCULATION";
+		;;
+		opt)
+		keywords_job=" OPT FREQ ";
+		echo "Job type is an OPTIMISATION AND FREQUENCY (normal thresholds)";
+		;;
+		topt)
+		keywords_job=" TIGHTOPT FREQ ";
+		echo "Job type is an OPTIMISATION AND FREQUENCY (tight thresholds)";
+		;;
+		tsopt)
+		keywords_job=" OPTTS FREQ ";
+		echo "Job type is a TRANSITION STATE OPTIMISATION AND FREQUENCY (normal thresholds)";
+		;;
+		tsirc)
+		keywords_job=" OPTTS FREQ IRC ";
+		echo "Job type is a TRANSITION STATE OPTIMISATION AND FREQUENCY WITH IRC (normal thresholds)";
+		;;
+		*)
+		echo "ERROR: Not a valid job type (sp, opt, topt, tsopt, tsirc)";
+		exit 1;
+		;;
+	esac
+else
+		keywords_job=" SP ";
+		echo "Job type is a SINGLE POINT CALCULATION";
+fi
+
+if [[ -n "${3}" ]]; then
+	if [[ ! $3 =~ ^[0-9]+$  ]]; then
+		echo "ERROR: Number of CPUs must be an integer";
+		exit 1;
+	fi
+	cpus=$3
+else
+	cpus=8
+fi
+
+if [[ -n "${4}" ]]; then
+	case $4 in
+		-2)
+		charge=$4
+		;;
+		-1)
+		charge=$4;
+		;;
+		0)
+		charge=$4;
+		;;
+		1)
+		charge=$4;
+		;;
+		2)
+		charge=$4;
+		;;
+		*)
+		echo "ERROR: Charge seems wrong ...";
+		exit 1;
+		;;
+	esac
+else
+	charge=0
+fi
+
+
+if [[ -n "${5}" ]]; then
+        if [[ ! $5 =~ ^[0-9]+$  ]]; then
+                echo "ERROR: Multiplicity must be an integer";
+		exit 1;
+	else
+                mult=$5;
+        fi
+else
+        mult=1
+fi
+
+echo "Selected options:" $keywords_default $keywords_job;
+echo "Charge: " $charge " / Multiplicity: " $mult;
+echo "Calculations will use " $cpus " CPUs"; 
+
+
+# SORT OUT crest_conformers.xyz
+
+# Is the file there?
+if [ ! -f ../*finalensemble.xyz ]; then
+        echo "ERROR: Cannot find basename_finalensemble.xyz one level up ... are you in the right directory?";
+	pwd;
+        exit 1;
+fi;
+
+# Check number of atoms the structure has and calculate lines for the split (+2)
+num_atoms=$(head -n 1 ../*.finalensemble.xyz);
+split_lines=$(echo $num_atoms + 2 | bc);
+echo "Structure has" $num_atoms "atoms"; # so .xyz files have $split_lines lines
+
+# How long must the suffix be?
+file_lines=$(wc -l < ../*.finalensemble.xyz);
+num_struc=$(echo  "scale=0; $file_lines / $split_lines" | bc);
+if (( $file_lines < 1 )); then
+        echo "ERROR: Empty file?";
+        exit 1;
+elif (( $num_struc < 10 )); then
+        suff_len=1;
+elif (( $num_struc < 100 )); then
+        suff_len=2;
+elif (( $num_struc < 1000 )); then
+        suff_len=3;
+elif (( $num_struc < 10000 )); then
+        suff_len=4;
+else
+        echo "ERROR: More than 10,000 structures ...?";
+        exit 1;
+fi;
+
+echo "Splitting .xyz file";
+split --lines=$split_lines --numeric-suffixes=1 --suffix-length=$suff_len ../*.finalensemble.xyz $1;
+
+
+# PREPARE ORCA INPUT FILES
+echo "There will be" $num_struc "input files";
+echo "Preparing ORCA input files ...";
+
+# Prepare each input file in turn
+for file in ${1}*; do
+	echo $keywords_default $keywords_job >> $file.inp;
+	echo >> $file.inp;
+	echo "%pal" >> $file.inp;
+	echo "nprocs" $cpus >> $file.inp;
+	echo "end" >> $file.inp
+	echo >> $file.inp;
+	echo "%maxcore 3000" >> $file.inp;
+	echo >> $file.inp;
+
+case $2 in
+	tsopt | tsirc)
+        	echo "%geom" >> $file.inp;
+		echo "Calc_Hess true" >> $file.inp;
+		echo "end" >> $file.inp;
+		echo >> $file.inp;
+                ;;
+esac
+
+	echo "*xyz " $charge $mult >> $file.inp;
+	tail -n $num_atoms $file >> $file.inp;
+	echo "*" >> $file.inp
+	echo >> $file.inp;
+	rm $file;
+done;
+
+# Put each input file in its own folder
+for file2 in *inp; do
+	mkdir ${file2%.inp};
+	mv $file2 ${file2%.inp};
+done;
+
+echo "ORCA input files are ready!"
+
+
+# SUBMIT JOBS?
+while [ 1 -eq 1 ];
+do
+	echo;
+	read -p "Submit jobs now? [y/n]"$'\n' -n 1 -r choice
+	case "$choice" in
+		y|Y)
+		while [ 1 -eq 1 ];
+		do
+			echo;
+			read -p "Run time in hours?"$'\n' choice2
+			if [[ $choice2 =~ ^[0-9]+$  ]]; then
+				echo "Submitting jobs ...";
+				for direc in *; do
+					cd $direc;
+					goorca $direc.inp $choice2;
+					cd ..;
+				done;
+				exit 0;
+			fi;
+		done;
+		;;
+		n|N)
+		exit 0;
+		;;
+	esac;
+done
