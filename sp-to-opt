@@ -1,0 +1,116 @@
+#!/bin/bash
+
+####################################################################################################
+# Script that converts a series of ORCA single point jobs to optimisation/frequency jobs           #
+# Requires a series of folders named as something_n where n are numbers - e.g. from goatsplit      #
+# Gives a series of folders named as something_n_opt, each containing an ORCA input file	   #
+#												   #
+# David Nelson, University of Strathclyde							   #
+# 20th November 2025										   #
+# v1												   #
+####################################################################################################
+
+# USAGE
+# sp-to-opt <number1> <number2> ...
+# where <number1> corresponds to something_number1, and so on
+# i.e. which of your many single point calculations are you converting to opt/freq ...!
+
+if [[ -z "${1}" ]]; then
+	echo "Please specify which single point calculations to turn into optimisations ..."
+	exit 1;
+fi;
+
+echo "Files to convert:" $@;
+
+# Some input sanitation ...
+for i in $@; do
+
+	# Only integers as arguments
+	if [[ ! $i =~ ^[0-9]+$ ]]; then
+		echo "ERROR:" $i "is not an integer";
+		exit 1;
+	fi;
+
+	# The directory has to exist
+	if [ ! -d *_$i ]; then
+		echo "ERROR: Directory" $i "not found";
+		exit 1;
+	fi;
+
+	# The directory has to have a .inp file in it
+	if [ ! -f *_$i/*inp ]; then
+		echo "ERROR: No input file in directory" $i;
+		exit 1;
+	fi;
+done;
+
+# Ask user if jobs are to be submitted, and for how long?
+while [ 1 -eq 1 ];
+do
+	echo;
+	read -p "Submit jobs automagically? [y/n]"$'\n' -n 1 -r choice
+	case "$choice" in
+		y|Y)
+			submit=1;
+			break;
+		;;
+		n|N)
+			submit=0;
+			break;
+		;;
+	esac;
+done
+
+if [[ $submit -eq 1 ]]; then
+	echo;
+	while [ 1 -eq 1 ];
+	do
+		read -p "Run time in hours?"$'\n' choice2
+		if [[ $choice2 =~ ^[0-9]+$ ]]; then
+			runtime=$choice2;
+			break;
+		else
+			echo "Invalid runtime - please enter an integer number of hours";
+		fi;
+	done;
+fi;
+
+
+# Do the loop
+for j in $@; do
+
+	# Debug purposes ...
+	#echo "Variable:" $j;
+	#echo "Doing ls ...";
+	#ls -d *_$j;
+	#echo "Set dir ..."
+	dir=$(ls -d *_$j);
+	#echo $dir;
+
+	# Make the directory ...
+	mkdir ${dir}_opt;
+
+	# Copy over the input file ...
+	infilepath=$(ls $dir/*_$j.inp);
+	infilename=${infilepath##*/};
+	cp $dir/$infilename ${dir}_opt/${infilename/.inp/_opt.inp};
+
+	# Edit the input file ...
+	sed -i "s/SP/OPT FREQ/g" ${dir}_opt/${infilename/.inp/_opt.inp};
+
+	# Confirm progress ...
+	echo "File" ${dir}_opt/${infilename/.inp/_opt.inp} "created ...";
+
+	# Submit jobs, if asked to ...
+	if [[ $submit -eq 1 ]]; then
+		cd ${dir}_opt;
+		goorca ${infilename/.inp/_opt.inp} $runtime;
+		echo "... and submitted!";
+		cd ..;
+	fi;
+
+done;
+
+
+exit 0;
+
